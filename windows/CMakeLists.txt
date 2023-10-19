@@ -91,4 +91,4 @@ set(webview_windows_bundled_libraries
 )
 
 # produce pdb file (windows debug symbols)
-target_link_options(${BINARY_NAME} PUBLIC /DEBUG:FULL)
+target_link_options(${PLUGIN_NAME} PUBLIC /DEBUG:FULL)
