@@ -89,3 +89,6 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE flutter flutter_wrapper_plugin)
 set(webview_windows_bundled_libraries
   PARENT_SCOPE
 )
+
+# produce pdb file (windows debug symbols)
+target_link_options(${BINARY_NAME} PUBLIC /DEBUG:FULL)
