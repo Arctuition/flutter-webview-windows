@@ -1,11 +1,12 @@
 #include "webview_bridge.h"
+#include "texture_bridge_gpu.h"
 
 #include <flutter/event_stream_handler_functions.h>
 #include <flutter/method_result_functions.h>
 
 #include <format>
-
-#include "texture_bridge_gpu.h"
+#include <thread>
+#include <chrono>
 
 namespace {
 constexpr auto kErrorInvalidArgs = "invalidArguments";
@@ -194,8 +195,11 @@ WebviewBridge::WebviewBridge(flutter::BinaryMessenger* messenger,
 }
 
 WebviewBridge::~WebviewBridge() {
-  method_channel_->SetMethodCallHandler(nullptr);
   texture_registrar_->UnregisterTexture(texture_id_);
+  // wait for the last rendering frame to finish to aviod potential flutter_texture_ access crash.
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+  method_channel_->SetMethodCallHandler(nullptr);
 }
 
 void WebviewBridge::RegisterEventHandlers() {
