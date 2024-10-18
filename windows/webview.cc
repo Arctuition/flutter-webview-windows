@@ -371,6 +371,52 @@ void Webview::RegisterEventHandlers() {
           })
           .Get(),
       &event_registrations_.contains_fullscreen_element_changed_token_);
+
+  auto webview24 = webview_.try_query<ICoreWebView2_4>();
+  if (webview24) {
+    webview24->add_DownloadStarting(
+        Callback<ICoreWebView2DownloadStartingEventHandler>(
+            [this](ICoreWebView2* sender,
+                   ICoreWebView2DownloadStartingEventArgs* args) -> HRESULT {
+              wil::com_ptr<ICoreWebView2Deferral> deferral;
+              args->GetDeferral(&deferral);
+
+              args->put_Handled(TRUE);
+
+              wil::com_ptr<ICoreWebView2DownloadOperation> download;
+              args->get_DownloadOperation(&download);
+
+              INT64 totalBytesToReceive = 0;
+              download->get_TotalBytesToReceive(&totalBytesToReceive);
+
+              wil::unique_cotaskmem_string uri;
+              download->get_Uri(&uri);
+
+              wil::unique_cotaskmem_string mimeType;
+              download->get_MimeType(&mimeType);
+
+              wil::unique_cotaskmem_string contentDisposition;
+              download->get_ContentDisposition(&contentDisposition);
+
+              wil::unique_cotaskmem_string resultFilePath;
+              args->get_ResultFilePath(&resultFilePath);
+
+              args->put_ResultFilePath(resultFilePath.get());
+              UpdateDownloadProgress(download.get());
+
+              if (download_event_callback_) {
+                download_event_callback_(
+                    {WebviewDownloadEventKind::DownloadStarted,
+                     util::Utf8FromUtf16(uri.get()),
+                     util::Utf8FromUtf16(resultFilePath.get()), 0,
+                     totalBytesToReceive});
+              }
+
+              return S_OK;
+            })
+            .Get(),
+        &event_registrations_.download_starting_token_);
+  }
 }
 
 void Webview::SetSurfaceSize(size_t width, size_t height, float scale_factor) {
@@ -585,23 +631,29 @@ void Webview::SetPointerButtonState(WebviewPointerButton button, bool is_down) {
 }
 
 void Webview::SendScroll(double delta, bool horizontal) {
-  // delta * 6 gives me a multiple of WHEEL_DELTA (120)
-  constexpr auto kScrollMultiplier = 6;
+  // clang-format off
+  //
+  // TODO:
+  // Using a fixed value here is certainly wrong. Flutter's calculation in flutter_window.cc
+  // needs to be inverted to get back the "native" value. See
+  // - https://github.com/flutter/engine/blob/82c1dfcf588c2669ca391134910d634ca31fddf1/shell/platform/windows/flutter_window.cc#L416-L426
+  // Related:
+  // - https://source.chromium.org/chromium/chromium/src/+/main:ui/events/blink/web_input_event_builders_win.cc
+  // - https://github.com/flutter/flutter/issues/107248
+  //
+  // clang-format on
+  constexpr auto kScrollMultiplier = 1.5;
 
   auto offset = static_cast<short>(delta * kScrollMultiplier);
-
-  POINT point;
-  point.x = 0;
-  point.y = 0;
 
   if (horizontal) {
     composition_controller_->SendMouseInput(
         COREWEBVIEW2_MOUSE_EVENT_KIND_HORIZONTAL_WHEEL, virtual_keys_.state(),
-        offset, point);
+        offset, last_cursor_pos_);
   } else {
     composition_controller_->SendMouseInput(COREWEBVIEW2_MOUSE_EVENT_KIND_WHEEL,
                                             virtual_keys_.state(), offset,
-                                            point);
+                                            last_cursor_pos_);
   }
 }
 
@@ -794,4 +846,67 @@ bool Webview::ClearVirtualHostNameMapping(const std::string& hostName) {
 
   return webview->ClearVirtualHostNameToFolderMapping(
       util::Utf16FromUtf8(hostName).c_str());
+}
+
+void Webview::UpdateDownloadProgress(ICoreWebView2DownloadOperation* download) {
+  download->add_BytesReceivedChanged(
+      Callback<ICoreWebView2BytesReceivedChangedEventHandler>(
+          [this](ICoreWebView2DownloadOperation* download,
+                 IUnknown* args) -> HRESULT {
+            if (download_event_callback_) {
+              INT64 recvd = 0;
+              download->get_BytesReceived(&recvd);
+              INT64 total = 0;
+              download->get_TotalBytesToReceive(&total);
+
+              wil::unique_cotaskmem_string uri;
+              download->get_Uri(&uri);
+              wil::unique_cotaskmem_string resultFilePath;
+              download->get_ResultFilePath(&resultFilePath);
+              download_event_callback_(
+                  {WebviewDownloadEventKind::DownloadProgress,
+                   util::Utf8FromUtf16(uri.get()),
+                   util::Utf8FromUtf16(resultFilePath.get()), recvd, total});
+            }
+            return S_OK;
+          })
+          .Get(),
+      &event_registrations_.download_bytes_received_token_);
+
+  download->add_StateChanged(
+      Callback<ICoreWebView2StateChangedEventHandler>(
+          [this](ICoreWebView2DownloadOperation* download,
+                 IUnknown* args) -> HRESULT {
+            COREWEBVIEW2_DOWNLOAD_STATE state;
+            download->get_State(&state);
+            switch (state) {
+              case COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS:
+                break;
+              case COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED:
+                // Here developer can take different actions based on
+                // `download->InterruptReason`. For example, show an error
+                // message to the end user.
+                break;
+              case COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED:
+                if (download_event_callback_) {
+                  wil::unique_cotaskmem_string uri;
+                  download->get_Uri(&uri);
+                  wil::unique_cotaskmem_string resultFilePath;
+                  download->get_ResultFilePath(&resultFilePath);
+                  INT64 recvd = 0;
+                  download->get_BytesReceived(&recvd);
+                  INT64 total = 0;
+                  download->get_TotalBytesToReceive(&total);
+                  download_event_callback_(
+                      {WebviewDownloadEventKind::DownloadCompleted,
+                       util::Utf8FromUtf16(uri.get()),
+                       util::Utf8FromUtf16(resultFilePath.get()), recvd,
+                       total});
+                }
+                break;
+            }
+            return S_OK;
+          })
+          .Get(),
+      &event_registrations_.download_state_changed_token_);
 }
