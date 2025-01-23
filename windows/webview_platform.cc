@@ -19,6 +19,7 @@ using namespace ABI::Windows::System;
 WebviewPlatform::WebviewPlatform()
     : rohelper_(std::make_unique<rx::RoHelper>(RO_INIT_SINGLETHREADED)) {
   if (rohelper_->WinRtAvailable()) {
+    // When used together with flutter_inappwebview, this plugin will fail to initialize because a thread can only create one dispatcher_queue_controller, so here we prioritize getting the existing controller, and only create a new one if none exists.
     ComPtr<IDispatcherQueueStatics> dispatcher_statics;
     HSTRING class_name;
     if (SUCCEEDED(WindowsCreateString(
@@ -28,7 +29,14 @@ WebviewPlatform::WebviewPlatform()
       if (SUCCEEDED(RoGetActivationFactory(
               class_name, IID_PPV_ARGS(&dispatcher_statics)))) {
         ComPtr<IDispatcherQueue> current_queue;
-        if (SUCCEEDED(dispatcher_statics->GetForCurrentThread(current_queue.GetAddressOf()))) {
+        if (FAILED(dispatcher_statics->GetForCurrentThread(current_queue.GetAddressOf()))) {
+          if (FAILED(rohelper_->CreateDispatcherQueueController(
+            options, dispatcher_queue_controller_.put()))) {
+            std::cerr << "Creating DispatcherQueueController failed." << std::endl;
+            WindowsDeleteString(class_name);
+            return;
+          }
+        } else {
           current_queue.Get()->QueryInterface(IID_PPV_ARGS(dispatcher_queue_controller_.put()));
         }
       }
