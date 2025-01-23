@@ -30,6 +30,8 @@ WebviewPlatform::WebviewPlatform()
               class_name, IID_PPV_ARGS(&dispatcher_statics)))) {
         ComPtr<IDispatcherQueue> current_queue;
         if (FAILED(dispatcher_statics->GetForCurrentThread(current_queue.GetAddressOf()))) {
+          DispatcherQueueOptions options{sizeof(DispatcherQueueOptions),
+                                   DQTYPE_THREAD_CURRENT, DQTAT_COM_STA};
           if (FAILED(rohelper_->CreateDispatcherQueueController(
             options, dispatcher_queue_controller_.put()))) {
             std::cerr << "Creating DispatcherQueueController failed." << std::endl;
@@ -37,7 +39,7 @@ WebviewPlatform::WebviewPlatform()
             return;
           }
         } else {
-          current_queue.Get()->QueryInterface(IID_PPV_ARGS(dispatcher_queue_controller_.put()));
+          current_queue->QueryInterface(IID_PPV_ARGS(dispatcher_queue_controller_.put()));
         }
       }
       WindowsDeleteString(class_name);
