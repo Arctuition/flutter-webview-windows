@@ -4,19 +4,35 @@
 #include <shlobj.h>
 #include <windows.graphics.capture.h>
 
+#include <wrl.h>
+#include <wrl/implements.h>
+#include <windows.system.h>
+
 #include <filesystem>
 #include <iostream>
+
+using namespace Microsoft::WRL;
+using namespace ABI::Windows::System;
+
+#pragma comment(lib, "runtimeobject.lib")
 
 WebviewPlatform::WebviewPlatform()
     : rohelper_(std::make_unique<rx::RoHelper>(RO_INIT_SINGLETHREADED)) {
   if (rohelper_->WinRtAvailable()) {
-    DispatcherQueueOptions options{sizeof(DispatcherQueueOptions),
-                                   DQTYPE_THREAD_CURRENT, DQTAT_COM_STA};
-
-    if (FAILED(rohelper_->CreateDispatcherQueueController(
-            options, dispatcher_queue_controller_.put()))) {
-      std::cerr << "Creating DispatcherQueueController failed." << std::endl;
-      return;
+    ComPtr<IDispatcherQueueStatics> dispatcher_statics;
+    HSTRING class_name;
+    if (SUCCEEDED(WindowsCreateString(
+            RuntimeClass_Windows_System_DispatcherQueue,
+            static_cast<UINT32>(wcslen(RuntimeClass_Windows_System_DispatcherQueue)),
+            &class_name))) {
+      if (SUCCEEDED(RoGetActivationFactory(
+              class_name, IID_PPV_ARGS(&dispatcher_statics)))) {
+        ComPtr<IDispatcherQueue> current_queue;
+        if (SUCCEEDED(dispatcher_statics->GetForCurrentThread(current_queue.GetAddressOf()))) {
+          current_queue.Get()->QueryInterface(IID_PPV_ARGS(dispatcher_queue_controller_.put()));
+        }
+      }
+      WindowsDeleteString(class_name);
     }
 
     if (!IsGraphicsCaptureSessionSupported()) {
